@@ -1652,8 +1652,376 @@ CONTAINS
     CALL LuSolve(n,MASS,LOAD) 
 
     fdg(1:n) = LOAD(1:n)
-
+!------------------------------------------------------------------------------
   END SUBROUTINE Ip2DgFieldInElement
 !------------------------------------------------------------------------------
-
   
+!------------------------------------------------------------------------------
+!> Given a finite element field expressed in terms of the hierarchic p-basis
+!> find its elementwise Lagrange interpolant of a specified degree. At the moment
+!> this subroutine has limited functionality, since the coordinates of the Lagrange
+!> nodes are not yet defined for all element types in the case of high p.
+!------------------------------------------------------------------------------
+  SUBROUTINE HierarchicPToLagrange(PElement, Degree, PSol, LSol, DOFs, PSolver)
+!------------------------------------------------------------------------------
+    USE MeshUtils, ONLY: AllocateElement
+    USE PElementMaps, ONLY: IsActivePElement, IsPElement
+    USE ElementDescription
+    IMPLICIT NONE
+
+    TYPE(Element_t), POINTER, INTENT(IN) :: PElement         !< An element structure capable for p-approximation
+    INTEGER, INTENT(IN) :: Degree                            !< The desired order of the Lagrange interpolant
+    REAL(KIND=dp), INTENT(IN) :: PSol(:,:)                   !< The DOFs of p-solution
+    REAL(KIND=dp), INTENT(INOUT) :: LSol(:,:)                !< The DOFs for the Lagrange interpolation
+    INTEGER, OPTIONAL, INTENT(IN) :: DOFs                    !< The first dimension of PSol
+    TYPE(Solver_t), POINTER, OPTIONAL, INTENT(IN) :: PSolver !< For seeking p-definitions from this solver
+!------------------------------------------------------------------------------
+    INTEGER, PARAMETER :: MAX_LINE_DEGREE = 3
+    INTEGER, PARAMETER :: MAX_TRIANGLE_DEGREE = 3
+    INTEGER, PARAMETER :: MAX_TRIANGLE_NODES = 10
+    INTEGER, PARAMETER :: MAX_QUAD_DEGREE = 3
+    INTEGER, PARAMETER :: MAX_LAGRANGE_NODES = 27
+
+    TYPE(Mesh_t), POINTER :: Mesh
+    TYPE(Nodes_t) :: PNodes
+    TYPE(Element_t), POINTER :: LElement => NULL()
+    LOGICAL ::  AllocationsDone = .FALSE.
+    LOGICAL :: PVersion, stat
+    INTEGER, ALLOCATABLE :: BasisDegree(:)
+    INTEGER :: Family, Fields, MaxFields, i, j, k, n, t, nd
+    INTEGER :: Offsets(MAX_QUAD_DEGREE)
+    REAL(KIND=dp), ALLOCATABLE :: PBasis(:)
+    REAL(KIND=dp), ALLOCATABLE :: LPoints(:,:)
+    REAL(KIND=dp), POINTER :: NodesU(:), NodesV(:), NodesW(:)
+    REAL(KIND=dp) :: ut, vt, wt, detJ
+    REAL(KIND=dp) :: delta
+
+    REAL(KIND=dp), TARGET, SAVE :: VTKLineU(MAX_LINE_DEGREE+1,MAX_LINE_DEGREE+1)
+
+    REAL(KIND=dp), TARGET, SAVE :: VTKTriangleU(MAX_TRIANGLE_DEGREE,MAX_TRIANGLE_NODES)
+    REAL(KIND=dp), TARGET, SAVE :: VTKTriangleV(MAX_TRIANGLE_DEGREE,MAX_TRIANGLE_NODES)
+    REAL(KIND=dp), TARGET, SAVE :: VTKTriangleW(MAX_TRIANGLE_NODES)
+    INTEGER, SAVE :: TriangleNodeCounts(MAX_TRIANGLE_DEGREE)
+
+    REAL(KIND=dp), TARGET, SAVE :: VTKQuadU(MAX_QUAD_DEGREE,(MAX_QUAD_DEGREE+1)**2)
+    REAL(KIND=dp), TARGET, SAVE :: VTKQuadV(MAX_QUAD_DEGREE,(MAX_QUAD_DEGREE+1)**2)
+    REAL(KIND=dp), TARGET, SAVE :: VTKQuadW((MAX_QUAD_DEGREE+1)**2)
+    INTEGER, SAVE :: QuadNodeCounts(MAX_QUAD_DEGREE)
+
+    CHARACTER(*), PARAMETER :: Caller = 'HierarchicPToLagrange'
+
+    SAVE PNodes, LElement, AllocationsDone, PBasis, BasisDegree, LPoints
+!------------------------------------------------------------------------------
+    LSol = 0.0d0
+
+    MaxFields = MIN(SIZE(PSol,1), SIZE(LSol,1))
+    IF (PRESENT(DOFs)) THEN
+      IF (DOFs > MaxFields) THEN
+        CALL Warn(Caller, 'Too small arrays to write all fields')
+        Fields = MaxFields
+      ELSE
+        Fields = DOFs
+      END IF
+    ELSE
+      Fields = MaxFields ! Write as many fields as seems to be possible
+    END IF
+
+    Family = PElement % TYPE % ElementCode / 100
+    IF (Family > 4) CALL Fatal(Caller, '3d needs still work')
+
+    IF (Degree == 1) THEN
+      DO k=1,Fields
+        LSol(k,1:Family) = PSol(k,1:Family)
+      END DO
+      RETURN
+    END IF
+
+    IF (PRESENT(PSolver)) THEN
+      Mesh => PSolver % Mesh
+    ELSE
+      Mesh => CurrentModel % Solver % Mesh
+    END IF
+
+    IF (.NOT. AllocationsDone) THEN
+      LElement => AllocateElement()
+      n = Mesh % MaxElementDOFs
+      ALLOCATE(PBasis(n), BasisDegree(n), LPoints(3,MAX_LAGRANGE_NODES), PNodes % x(n), &
+          PNodes % y(n), PNodes % z(n))
+
+      ! --------------------------------------------------------------------------
+      ! Create the nodes for line elements (works for any given degree):
+      ! --------------------------------------------------------------------------
+      VTKLineU(1:MAX_LINE_DEGREE,1) = -1.0d0
+      VTKLineU(1:MAX_LINE_DEGREE,2) = 1.0d0
+      DO k=2,MAX_LINE_DEGREE
+        delta = 2.0/k
+        ut = -1.0d0
+        DO i=1,k-1
+          ut = ut + delta 
+          VTKLineU(k,i+2) = ut
+        END DO
+      END DO
+      VTKLineU(MAX_LINE_DEGREE+1,:) = 0.0d0  ! One extra row to get zero values for non-active parameters
+
+      ! --------------------------------------------------------------------------
+      ! Create the nodes for triangles (TO DO: support for higher degrees):
+      ! --------------------------------------------------------------------------
+      VTKTriangleU(1:MAX_TRIANGLE_DEGREE,1) = -1.0d0
+      VTKTriangleU(1:MAX_TRIANGLE_DEGREE,2) = 1.0d0
+      VTKTriangleU(1:MAX_TRIANGLE_DEGREE,3) = 0.0d0
+      VTKTriangleV(1:MAX_TRIANGLE_DEGREE,1) = 0.0d0
+      VTKTriangleV(1:MAX_TRIANGLE_DEGREE,2) = 0.0d0
+      VTKTriangleV(1:MAX_TRIANGLE_DEGREE,3) = SQRT(3.0d0)
+
+      VTKTriangleU(2,4) = 0.0d0
+      VTKTriangleU(2,5) = 0.5d0
+      VTKTriangleU(2,6) = -0.5d0
+      VTKTriangleV(2,4) = 0.0d0
+      VTKTriangleV(2,5) = SQRT(3.0d0)/2.0d0
+      VTKTriangleV(2,6) = SQRT(3.0d0)/2.0d0
+
+      VTKTriangleU(3,4:5) = VTKLineU(3,3:4)
+      VTKTriangleV(3,4:5) = 0.0d0
+      VTKTriangleU(3,6) = 2.0d0/3.0d0
+      VTKTriangleU(3,7) = 1.0d0/3.0d0
+      VTKTriangleV(3,6) = SQRT(3.0d0)/3.0d0
+      VTKTriangleV(3,7) = 2.0d0*SQRT(3.0d0)/3.0d0
+
+      VTKTriangleU(3,8) = -1.0d0/3.0d0
+      VTKTriangleU(3,9) = -2.0d0/3.0d0
+      VTKTriangleV(3,8) = 2.0d0*SQRT(3.0d0)/3.0d0
+      VTKTriangleV(3,9) = SQRT(3.0d0)/3.0d0
+      VTKTriangleU(3,10) = 0.0d0
+      VTKTriangleV(3,10) = SQRT(3.0d0)/3.0d0
+
+      VTKTriangleW = 0.0d0
+
+      TriangleNodeCounts(1) = 3
+      TriangleNodeCounts(2) = 6
+      TriangleNodeCounts(3) = 10
+
+      ! --------------------------------------------------------------------------
+      ! Create the nodes for quads (works for any given degree):
+      ! --------------------------------------------------------------------------
+      VTKQuadU(1:MAX_QUAD_DEGREE,1) = -1.0d0
+      VTKQuadU(1:MAX_QUAD_DEGREE,2:3) = 1.0d0
+      VTKQuadU(1:MAX_QUAD_DEGREE,4) = -1.0d0
+      VTKQuadV(1:MAX_QUAD_DEGREE,1:2) = -1.0d0
+      VTKQuadV(1:MAX_QUAD_DEGREE,3:4) = 1.0d0
+
+      ! The first edge:
+      QuadNodeCounts = 4
+      vt = -1.0d0
+      DO k=2,MAX_LINE_DEGREE
+        delta = 2.0/k
+        ut = -1.0d0
+        DO i=1,k-1
+          ut = ut + delta 
+          VTKQuadU(k,i+4) = ut
+          VTKQuadV(k,i+4) = vt         
+          QuadNodeCounts(k) = QuadNodeCounts(k) + 1
+        END DO
+      END DO
+
+      ! The second edge:
+      Offsets = QuadNodeCounts
+      ut = 1.0d0
+      DO k=2,MAX_LINE_DEGREE
+        delta = 2.0/k
+        vt = -1.0d0
+        DO i=1,k-1
+          vt = vt + delta
+          VTKQuadU(k,i+Offsets(k)) = ut
+          VTKQuadV(k,i+Offsets(k)) = vt         
+          QuadNodeCounts(k) = QuadNodeCounts(k) + 1
+        END DO
+      END DO
+
+      ! The third edge:
+      Offsets = QuadNodeCounts
+      vt = 1.0d0
+      DO k=2,MAX_LINE_DEGREE
+        delta = 2.0/k
+        ut = -1.0d0
+        DO i=1,k-1
+          ut = ut + delta
+          VTKQuadU(k,i+Offsets(k)) = ut
+          VTKQuadV(k,i+Offsets(k)) = vt         
+          QuadNodeCounts(k) = QuadNodeCounts(k) + 1
+        END DO
+      END DO
+
+      ! The fourth edge:
+      Offsets = QuadNodeCounts
+      ut = -1.0d0
+      DO k=2,MAX_LINE_DEGREE
+        delta = 2.0/k
+        vt = -1.0d0
+        DO i=1,k-1
+          vt = vt + delta
+          VTKQuadU(k,i+Offsets(k)) = ut
+          VTKQuadV(k,i+Offsets(k)) = vt         
+          QuadNodeCounts(k) = QuadNodeCounts(k) + 1
+        END DO
+      END DO
+
+      ! Bubbles
+      Offsets = QuadNodeCounts
+      vt = -1.0d0
+      DO k=2,MAX_LINE_DEGREE
+        delta = 2.0/k
+        vt = -1.0d0
+        DO i=1,k-1
+          vt = vt + delta
+          ut = -1.0d0
+          DO j=1,k-1
+            ut = ut + delta 
+            VTKQuadU(k,j+Offsets(k)) = ut
+            VTKQuadV(k,j+Offsets(k)) = vt         
+            QuadNodeCounts(k) = QuadNodeCounts(k) + 1
+          END DO
+          Offsets(k) = QuadNodeCounts(k)
+        END DO
+      END DO
+      VTKQuadW = 0.0d0
+
+      AllocationsDone = .TRUE.
+    END IF
+
+    IF (PRESENT(PSolver)) THEN
+      PVersion = IsActivePElement(PElement, PSolver)
+    ELSE
+      PVersion = IsPElement(PElement)
+    END IF
+
+    IF (.NOT. PVersion) THEN
+      CALL Warn(Caller, 'The input element is not a p-element, returning')
+      RETURN
+    END IF
+
+    PNodes % x(:) = 0.0d0
+    PNodes % y(:) = 0.0d0
+    PNodes % z(:) = 0.0d0
+    !
+    ! NOTE: We shall not need the derivatives of basis functions or
+    ! the determinant of the element mapping. Hence using the following
+    ! nodal coordinates is sufficient, although in principle we
+    ! might disregard some values 
+    !
+    n = PElement % TYPE % NumberOfNodes
+    PNodes % x(1:n) = Mesh % Nodes % x(PElement % NodeIndexes(1:n))
+    PNodes % y(1:n) = Mesh % Nodes % y(PElement % NodeIndexes(1:n))
+    PNodes % z(1:n) = Mesh % Nodes % z(PElement % NodeIndexes(1:n))
+
+    SELECT CASE(Family)
+    CASE(2)
+      IF (Degree > MAX_LINE_DEGREE) THEN
+        CALL Fatal(Caller, 'Lagrange lines degree exceeds the supported maximum')
+      END IF
+      n = Degree + 1
+      NodesU => VTKLineU(Degree,1:n)
+      NodesV => VTKLineU(MAX_LINE_DEGREE+1,1:n)
+      NodesW => VTKLineU(MAX_LINE_DEGREE+1,1:n)
+
+    CASE(3)
+      IF (Degree > MAX_TRIANGLE_DEGREE) THEN
+        CALL Fatal(Caller, 'Lagrange traingles degree exceeds the supported maximum')
+      END IF
+      n = TriangleNodeCounts(Degree)
+      NodesU => VTKTriangleU(Degree,1:n)
+      NodesV => VTKTriangleV(Degree,1:n)
+      NodesW => VTKTriangleW(1:n)
+
+    CASE(4)
+      IF (Degree > MAX_QUAD_DEGREE) THEN
+        CALL Fatal(Caller, 'Lagrange quads degree exceeds the supported maximum')
+      END IF
+      n = QuadNodeCounts(Degree)
+      NodesU => VTKQuadU(Degree,1:n)
+      NodesV => VTKQuadV(Degree,1:n)
+      NodesW => VTKQuadW(1:n)
+
+    CASE(5)
+      SELECT CASE(Degree)
+      CASE(2)
+        LElement % Type => GetElementType(510, .FALSE.)
+        n = LElement % Type % NumberOfNodes
+        DO t=1,n
+          ! ------------------------------------------------------------------
+          ! Map the Lagrange node to the corresponding point on the p-element:
+          ! ------------------------------------------------------------------
+          ut = LElement % Type % NodeU(t)
+          vt = LElement % Type % NodeV(t)
+          wt = LElement % Type % NodeW(t)
+          LPoints(1,t) =  -1.0d0 + 2.0d0*ut + vt + wt
+          LPoints(2,t) = SQRT(3.0d0)*vt + 1.0d0/SQRT(3.0d0)*wt
+          LPoints(3,t) = SQRT(8.0d0)/SQRT(3.0d0)*wt
+        END DO
+      CASE DEFAULT
+        CALL Fatal(Caller, 'Lagrange tetrahedra up to the order 2 supported')
+      END SELECT
+    CASE(6)
+      SELECT CASE(Degree)    
+      CASE(2)
+        LElement % Type => GetElementType(613, .FALSE.)
+        n = LElement % Type % NumberOfNodes
+        LPoints(1,1:n) = LElement % Type % NodeU(1:n)
+        LPoints(2,1:n) = LElement % Type % NodeV(1:n)
+        LPoints(3,1:n) = LElement % Type % NodeW(1:n)
+        ! TO DO:
+        ! Transform to p-element nodes
+        CALL Fatal(Caller, 'Pyramids are not yet supported')
+      CASE DEFAULT
+        CALL Fatal(Caller, 'Lagrange pyramids up to the order 2 supported')
+      END SELECT
+    CASE(7)
+      SELECT CASE(Degree)    
+      CASE(2)
+        LElement % Type => GetElementType(715, .FALSE.)
+        n = LElement % Type % NumberOfNodes
+        DO t=1,n
+          ! ------------------------------------------------------------------
+          ! Map the Lagrange node to the corresponding point on the p-element:
+          ! ------------------------------------------------------------------
+          ut = LElement % Type % NodeU(t)
+          vt = LElement % Type % NodeV(t)
+          LPoints(1,t) = -1.0d0 + 2.0d0*ut + vt
+          LPoints(2,t) = SQRT(3.0d0)*vt
+          LPoints(3,t) = LElement % Type % NodeW(t)
+        END DO
+      CASE DEFAULT
+        CALL Fatal(Caller, 'Lagrange prisms up to the order 2 supported')
+      END SELECT
+    CASE(8)
+      SELECT CASE(Degree)
+      CASE(2)
+        LElement % Type => GetElementType(827, .FALSE.)
+        n = LElement % Type % NumberOfNodes
+        LPoints(1,1:n) = LElement % Type % NodeU(1:n)
+        LPoints(2,1:n) = LElement % Type % NodeV(1:n)
+        LPoints(3,1:n) = LElement % Type % NodeW(1:n)
+      CASE DEFAULT
+        CALL Fatal(Caller, 'Lagrange hexahedra up to the order 2 supported')
+      END SELECT
+    CASE DEFAULT
+      CALL Fatal(Caller, 'An unknown element family')
+    END SELECT
+
+    BasisDegree(:) = 0
+
+    DO t = 1,n
+      ut = NodesU(t)
+      vt = NodesV(t)
+      wt = NodesW(t)!; print *, 'CALLING AT POINT ', t,ut,vt,wt
+
+      stat = ElementInfo(PElement, PNodes, ut, vt, wt, detJ, PBasis, BasisDegree=BasisDegree, &
+          USolver=PSolver)
+      IF (t == 1) nd = COUNT(BasisDegree > 0)
+      ! print *, 'b-basis dimension ', nd
+      DO k = 1,Fields
+        LSol(k,t) = SUM(PBasis(1:nd) * PSol(k,1:nd))
+      END DO
+    END DO
+!------------------------------------------------------------------------------
+  END SUBROUTINE HierarchicPToLagrange
+!------------------------------------------------------------------------------
