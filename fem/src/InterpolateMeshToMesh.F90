@@ -1778,53 +1778,19 @@ CONTAINS
 
       ! The first edge:
       TriangleNodeCounts = 3
-      vt = 0.0d0
-      DO k=2,MAX_TRIANGLE_DEGREE
-        delta = 2.0/k
-        ut = -1.0d0
-        DO i=1,k-1
-          ut = ut + delta 
-          VTKTriangleU(k,i+3) = ut
-          VTKTriangleV(k,i+4) = vt         
-          TriangleNodeCounts(k) = TriangleNodeCounts(k) + 1
-        END DO
-      END DO
+      OffSets = 3
+      CALL NodesOnEdge(VTKTriangleU, VTKTriangleV, 1, 2, MAX_TRIANGLE_DEGREE, &
+          Offsets, TriangleNodeCounts)
 
       ! The second edge:
       Offsets(1:MAX_TRIANGLE_DEGREE) = TriangleNodeCounts(1:MAX_TRIANGLE_DEGREE)
-      r(1) = VTKTriangleU(1,3) - VTKTriangleU(1,2)
-      r(2) = VTKTriangleV(1,3) - VTKTriangleV(1,2)
-      r(1:2) = r(1:2)/SQRT(SUM(r(1:2)**2))
-      ut = VTKTriangleU(1,2)
-      vt = VTKTriangleV(1,2)
-      DO k=2,MAX_TRIANGLE_DEGREE
-        delta = 2.0/k
-        DO i=1,k-1
-          ut = ut + delta * r(1)
-          vt = vt + delta * r(2)
-          VTKTriangleU(k,i+Offsets(k)) = ut
-          VTKTriangleV(k,i+Offsets(k)) = vt         
-          TriangleNodeCounts(k) = TriangleNodeCounts(k) + 1
-        END DO
-      END DO
+      CALL NodesOnEdge(VTKTriangleU, VTKTriangleV, 2, 3, MAX_TRIANGLE_DEGREE, &
+          Offsets, TriangleNodeCounts)
 
       ! The third edge:
       Offsets(1:MAX_TRIANGLE_DEGREE) = TriangleNodeCounts(1:MAX_TRIANGLE_DEGREE)
-      r(1) = VTKTriangleU(1,1) - VTKTriangleU(1,3)
-      r(2) = VTKTriangleV(1,1) - VTKTriangleV(1,3)
-      r(1:2) = r(1:2)/SQRT(SUM(r(1:2)**2))
-      ut = VTKTriangleU(1,3)
-      vt = VTKTriangleV(1,3)
-      DO k=2,MAX_TRIANGLE_DEGREE
-        delta = 2.0/k
-        DO i=1,k-1
-          ut = ut + delta * r(1)
-          vt = vt + delta * r(2)
-          VTKTriangleU(k,i+Offsets(k)) = ut
-          VTKTriangleV(k,i+Offsets(k)) = vt         
-          TriangleNodeCounts(k) = TriangleNodeCounts(k) + 1
-        END DO
-      END DO
+      CALL NodesOnEdge(VTKTriangleU, VTKTriangleV, 3, 1, MAX_TRIANGLE_DEGREE, &
+          Offsets, TriangleNodeCounts)
 
       ! Bubbles (TO DO: support for degrees > 3 by recursion):
       VTKTriangleU(3,10) = 0.0d0
@@ -1850,61 +1816,26 @@ CONTAINS
 
       ! The first edge:
       QuadNodeCounts = 4
-      vt = -1.0d0
-      DO k=2,MAX_QUAD_DEGREE
-        delta = 2.0/k
-        ut = -1.0d0
-        DO i=1,k-1
-          ut = ut + delta 
-          VTKQuadU(k,i+4) = ut
-          VTKQuadV(k,i+4) = vt         
-          QuadNodeCounts(k) = QuadNodeCounts(k) + 1
-        END DO
-      END DO
+      OffSets = 4
+      CALL NodesOnEdge(VTKQuadU, VTKQuadV, 1, 2, MAX_QUAD_DEGREE, &
+          Offsets, QuadNodeCounts)
 
       ! The second edge:
       Offsets(1:MAX_QUAD_DEGREE) = QuadNodeCounts(1:MAX_QUAD_DEGREE)
-      ut = 1.0d0
-      DO k=2,MAX_QUAD_DEGREE
-        delta = 2.0/k
-        vt = -1.0d0
-        DO i=1,k-1
-          vt = vt + delta
-          VTKQuadU(k,i+Offsets(k)) = ut
-          VTKQuadV(k,i+Offsets(k)) = vt         
-          QuadNodeCounts(k) = QuadNodeCounts(k) + 1
-        END DO
-      END DO
+      CALL NodesOnEdge(VTKQuadU, VTKQuadV, 2, 3, MAX_QUAD_DEGREE, &
+          Offsets, QuadNodeCounts)
 
       ! The third edge:
       Offsets(1:MAX_QUAD_DEGREE) = QuadNodeCounts(1:MAX_QUAD_DEGREE)
-      vt = 1.0d0
-      DO k=2,MAX_QUAD_DEGREE
-        delta = 2.0/k
-        ut = -1.0d0
-        DO i=1,k-1
-          ut = ut + delta
-          VTKQuadU(k,i+Offsets(k)) = ut
-          VTKQuadV(k,i+Offsets(k)) = vt         
-          QuadNodeCounts(k) = QuadNodeCounts(k) + 1
-        END DO
-      END DO
+      CALL NodesOnEdge(VTKQuadU, VTKQuadV, 4, 3, MAX_QUAD_DEGREE, &
+          Offsets, QuadNodeCounts)
 
       ! The fourth edge:
       Offsets(1:MAX_QUAD_DEGREE) = QuadNodeCounts(1:MAX_QUAD_DEGREE)
-      ut = -1.0d0
-      DO k=2,MAX_QUAD_DEGREE
-        delta = 2.0/k
-        vt = -1.0d0
-        DO i=1,k-1
-          vt = vt + delta
-          VTKQuadU(k,i+Offsets(k)) = ut
-          VTKQuadV(k,i+Offsets(k)) = vt         
-          QuadNodeCounts(k) = QuadNodeCounts(k) + 1
-        END DO
-      END DO
+      CALL NodesOnEdge(VTKQuadU, VTKQuadV, 1, 4, MAX_QUAD_DEGREE, &
+          Offsets, QuadNodeCounts)
 
-      ! Bubbles
+      ! Bubbles:
       Offsets(1:MAX_QUAD_DEGREE) = QuadNodeCounts(1:MAX_QUAD_DEGREE)
       vt = -1.0d0
       DO k=2,MAX_QUAD_DEGREE
@@ -1923,6 +1854,10 @@ CONTAINS
         END DO
       END DO
       VTKQuadW = 0.0d0
+
+      ! --------------------------------------------------------------------------
+      ! Create the nodes for tetrahedra:
+      ! --------------------------------------------------------------------------
 
       AllocationsDone = .TRUE.
     END IF
@@ -2061,6 +1996,62 @@ CONTAINS
         LSol(k,t) = SUM(PBasis(1:nd) * PSol(k,1:nd))
       END DO
     END DO
+
+  CONTAINS
+
+    ! --------------------------------------------------------------------------------
+    ! Given the vertices of an element in the first rows of the coordinate arrays
+    ! NodesU, NodesV and NodesW, create additional nodes corresponding to the Lagrange
+    ! interpolation up to the polynomial degree Maxdegree. The edge is defined by
+    ! specifying its start and end indices and is assumed to be of length 2.
+    ! The array Offsets gives the node counts before adding new nodes on the edge,
+    ! while the array NodeCounts gives the counts after this action.
+    ! --------------------------------------------------------------------------------
+    SUBROUTINE NodesOnEdge(NodesU, NodesV, ind_start, ind_end, MaxDegree, Offsets, &
+        NodeCounts, NodesW)
+
+      IMPLICIT NONE
+      REAL(KIND=dp), INTENT(INOUT):: NodesU(:,:), NodesV(:,:) 
+      INTEGER, INTENT(IN) :: ind_start, ind_end
+      INTEGER, INTENT(IN) :: MaxDegree
+      INTEGER, INTENT(IN) :: OffSets(:)
+      INTEGER, INTENT(INOUT) :: NodeCounts(:)
+      REAL(KIND=dp), OPTIONAL, INTENT(INOUT):: NodesW(:,:)
+      ! --------------------------------------------------------------
+      REAL(KIND=dp), PARAMETER :: L = 2.0_dp
+      LOGICAL :: CreateW
+      INTEGER :: i, k
+      REAL(KIND=dp) :: r(3), ut, vt, wt, delta
+      ! --------------------------------------------------------------
+      CreateW = PRESENT(NodesW)
+      r(1) =  NodesU(1,ind_end) - NodesU(1,ind_start)
+      r(2) =  NodesV(1,ind_end) - NodesV(1,ind_start)
+      IF (CreateW) THEN
+        r(3) =  NodesW(1,ind_end) - NodesW(1,ind_start)
+        k = 3
+      ELSE
+        k = 2
+      END IF
+      r(1:k) = r(1:k)/SQRT(SUM(r(1:k)**2))
+
+      DO k=2,MaxDegree
+        delta = L/k
+        ut = NodesU(1,ind_start)
+        vt = NodesV(1,ind_start)
+        DO i=1,k-1
+          ut = ut + delta * r(1)
+          vt = vt + delta * r(2)
+          NodesU(k,i+Offsets(k)) = ut
+          NodesV(k,i+Offsets(k)) = vt
+          IF (CreateW) THEN
+            wt = wt + delta * r(3)
+            NodesW(k,i+Offsets(k)) = wt
+          END IF
+          NodeCounts(k) = NodeCounts(k) + 1
+        END DO
+      END DO
+    END SUBROUTINE NodesOnEdge
+
 !------------------------------------------------------------------------------
   END SUBROUTINE HierarchicPToLagrange
 !------------------------------------------------------------------------------
