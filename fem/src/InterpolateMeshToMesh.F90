@@ -1677,10 +1677,11 @@ CONTAINS
     TYPE(Solver_t), POINTER, OPTIONAL, INTENT(IN) :: PSolver !< For seeking p-definitions from this solver
 !------------------------------------------------------------------------------
     INTEGER, PARAMETER :: MAX_LINE_DEGREE = 3
-    INTEGER, PARAMETER :: MAX_TRIANGLE_DEGREE = 3
-    INTEGER, PARAMETER :: MAX_TRIANGLE_NODES = 10
+    INTEGER, PARAMETER :: MAX_TRIANGLE_DEGREE = 4
+    INTEGER, PARAMETER :: MAX_TRIANGLE_NODES = 15
     INTEGER, PARAMETER :: MAX_QUAD_DEGREE = 3
     INTEGER, PARAMETER :: MAX_LAGRANGE_NODES = 27
+    INTEGER, PARAMETER :: MAX_DEGREE = 10  ! The maximal polynomial degree over any element shape 
 
     TYPE(Mesh_t), POINTER :: Mesh
     TYPE(Nodes_t) :: PNodes
@@ -1689,12 +1690,12 @@ CONTAINS
     LOGICAL :: PVersion, stat
     INTEGER, ALLOCATABLE :: BasisDegree(:)
     INTEGER :: Family, Fields, MaxFields, i, j, k, n, t, nd
-    INTEGER :: Offsets(MAX_QUAD_DEGREE)
+    INTEGER :: Offsets(MAX_DEGREE)
     REAL(KIND=dp), ALLOCATABLE :: PBasis(:)
     REAL(KIND=dp), ALLOCATABLE :: LPoints(:,:)
     REAL(KIND=dp), POINTER :: NodesU(:), NodesV(:), NodesW(:)
     REAL(KIND=dp) :: ut, vt, wt, detJ
-    REAL(KIND=dp) :: delta
+    REAL(KIND=dp) :: r(3), delta
 
     REAL(KIND=dp), TARGET, SAVE :: VTKLineU(MAX_LINE_DEGREE+1,MAX_LINE_DEGREE+1)
 
@@ -1764,7 +1765,8 @@ CONTAINS
       VTKLineU(MAX_LINE_DEGREE+1,:) = 0.0d0  ! One extra row to get zero values for non-active parameters
 
       ! --------------------------------------------------------------------------
-      ! Create the nodes for triangles (TO DO: support for higher degrees):
+      ! Create the nodes for triangles (revise the construction of bubbles to 
+      ! support any given degree):
       ! --------------------------------------------------------------------------
       VTKTriangleU(1:MAX_TRIANGLE_DEGREE,1) = -1.0d0
       VTKTriangleU(1:MAX_TRIANGLE_DEGREE,2) = 1.0d0
@@ -1772,33 +1774,70 @@ CONTAINS
       VTKTriangleV(1:MAX_TRIANGLE_DEGREE,1) = 0.0d0
       VTKTriangleV(1:MAX_TRIANGLE_DEGREE,2) = 0.0d0
       VTKTriangleV(1:MAX_TRIANGLE_DEGREE,3) = SQRT(3.0d0)
-
-      VTKTriangleU(2,4) = 0.0d0
-      VTKTriangleU(2,5) = 0.5d0
-      VTKTriangleU(2,6) = -0.5d0
-      VTKTriangleV(2,4) = 0.0d0
-      VTKTriangleV(2,5) = SQRT(3.0d0)/2.0d0
-      VTKTriangleV(2,6) = SQRT(3.0d0)/2.0d0
-
-      VTKTriangleU(3,4:5) = VTKLineU(3,3:4)
-      VTKTriangleV(3,4:5) = 0.0d0
-      VTKTriangleU(3,6) = 2.0d0/3.0d0
-      VTKTriangleU(3,7) = 1.0d0/3.0d0
-      VTKTriangleV(3,6) = SQRT(3.0d0)/3.0d0
-      VTKTriangleV(3,7) = 2.0d0*SQRT(3.0d0)/3.0d0
-
-      VTKTriangleU(3,8) = -1.0d0/3.0d0
-      VTKTriangleU(3,9) = -2.0d0/3.0d0
-      VTKTriangleV(3,8) = 2.0d0*SQRT(3.0d0)/3.0d0
-      VTKTriangleV(3,9) = SQRT(3.0d0)/3.0d0
-      VTKTriangleU(3,10) = 0.0d0
-      VTKTriangleV(3,10) = SQRT(3.0d0)/3.0d0
-
       VTKTriangleW = 0.0d0
 
-      TriangleNodeCounts(1) = 3
-      TriangleNodeCounts(2) = 6
-      TriangleNodeCounts(3) = 10
+      ! The first edge:
+      TriangleNodeCounts = 3
+      vt = 0.0d0
+      DO k=2,MAX_TRIANGLE_DEGREE
+        delta = 2.0/k
+        ut = -1.0d0
+        DO i=1,k-1
+          ut = ut + delta 
+          VTKTriangleU(k,i+3) = ut
+          VTKTriangleV(k,i+4) = vt         
+          TriangleNodeCounts(k) = TriangleNodeCounts(k) + 1
+        END DO
+      END DO
+
+      ! The second edge:
+      Offsets(1:MAX_TRIANGLE_DEGREE) = TriangleNodeCounts(1:MAX_TRIANGLE_DEGREE)
+      r(1) = VTKTriangleU(1,3) - VTKTriangleU(1,2)
+      r(2) = VTKTriangleV(1,3) - VTKTriangleV(1,2)
+      r(1:2) = r(1:2)/SQRT(SUM(r(1:2)**2))
+      ut = VTKTriangleU(1,2)
+      vt = VTKTriangleV(1,2)
+      DO k=2,MAX_TRIANGLE_DEGREE
+        delta = 2.0/k
+        DO i=1,k-1
+          ut = ut + delta * r(1)
+          vt = vt + delta * r(2)
+          VTKTriangleU(k,i+Offsets(k)) = ut
+          VTKTriangleV(k,i+Offsets(k)) = vt         
+          TriangleNodeCounts(k) = TriangleNodeCounts(k) + 1
+        END DO
+      END DO
+
+      ! The third edge:
+      Offsets(1:MAX_TRIANGLE_DEGREE) = TriangleNodeCounts(1:MAX_TRIANGLE_DEGREE)
+      r(1) = VTKTriangleU(1,1) - VTKTriangleU(1,3)
+      r(2) = VTKTriangleV(1,1) - VTKTriangleV(1,3)
+      r(1:2) = r(1:2)/SQRT(SUM(r(1:2)**2))
+      ut = VTKTriangleU(1,3)
+      vt = VTKTriangleV(1,3)
+      DO k=2,MAX_TRIANGLE_DEGREE
+        delta = 2.0/k
+        DO i=1,k-1
+          ut = ut + delta * r(1)
+          vt = vt + delta * r(2)
+          VTKTriangleU(k,i+Offsets(k)) = ut
+          VTKTriangleV(k,i+Offsets(k)) = vt         
+          TriangleNodeCounts(k) = TriangleNodeCounts(k) + 1
+        END DO
+      END DO
+
+      ! Bubbles (TO DO: support for degrees > 3 by recursion):
+      VTKTriangleU(3,10) = 0.0d0
+      VTKTriangleV(3,10) = SQRT(3.0d0)/3.0d0
+      TriangleNodeCounts(3) = TriangleNodeCounts(3) + 1
+
+      VTKTriangleU(4,13) = -0.25d0
+      VTKTriangleU(4,14) = 0.25d0
+      VTKTriangleU(4,15) = 0.0d0
+      VTKTriangleV(4,13) = SQRT(3.0d0)/4.0d0
+      VTKTriangleV(4,14) = SQRT(3.0d0)/4.0d0
+      VTKTriangleV(4,15) = SQRT(3.0d0)/2.0d0
+      TriangleNodeCounts(4) = TriangleNodeCounts(4) + 3      
 
       ! --------------------------------------------------------------------------
       ! Create the nodes for quads (works for any given degree):
@@ -1812,7 +1851,7 @@ CONTAINS
       ! The first edge:
       QuadNodeCounts = 4
       vt = -1.0d0
-      DO k=2,MAX_LINE_DEGREE
+      DO k=2,MAX_QUAD_DEGREE
         delta = 2.0/k
         ut = -1.0d0
         DO i=1,k-1
@@ -1824,9 +1863,9 @@ CONTAINS
       END DO
 
       ! The second edge:
-      Offsets = QuadNodeCounts
+      Offsets(1:MAX_QUAD_DEGREE) = QuadNodeCounts(1:MAX_QUAD_DEGREE)
       ut = 1.0d0
-      DO k=2,MAX_LINE_DEGREE
+      DO k=2,MAX_QUAD_DEGREE
         delta = 2.0/k
         vt = -1.0d0
         DO i=1,k-1
@@ -1838,9 +1877,9 @@ CONTAINS
       END DO
 
       ! The third edge:
-      Offsets = QuadNodeCounts
+      Offsets(1:MAX_QUAD_DEGREE) = QuadNodeCounts(1:MAX_QUAD_DEGREE)
       vt = 1.0d0
-      DO k=2,MAX_LINE_DEGREE
+      DO k=2,MAX_QUAD_DEGREE
         delta = 2.0/k
         ut = -1.0d0
         DO i=1,k-1
@@ -1852,9 +1891,9 @@ CONTAINS
       END DO
 
       ! The fourth edge:
-      Offsets = QuadNodeCounts
+      Offsets(1:MAX_QUAD_DEGREE) = QuadNodeCounts(1:MAX_QUAD_DEGREE)
       ut = -1.0d0
-      DO k=2,MAX_LINE_DEGREE
+      DO k=2,MAX_QUAD_DEGREE
         delta = 2.0/k
         vt = -1.0d0
         DO i=1,k-1
@@ -1866,9 +1905,9 @@ CONTAINS
       END DO
 
       ! Bubbles
-      Offsets = QuadNodeCounts
+      Offsets(1:MAX_QUAD_DEGREE) = QuadNodeCounts(1:MAX_QUAD_DEGREE)
       vt = -1.0d0
-      DO k=2,MAX_LINE_DEGREE
+      DO k=2,MAX_QUAD_DEGREE
         delta = 2.0/k
         vt = -1.0d0
         DO i=1,k-1
@@ -1925,7 +1964,7 @@ CONTAINS
 
     CASE(3)
       IF (Degree > MAX_TRIANGLE_DEGREE) THEN
-        CALL Fatal(Caller, 'Lagrange traingles degree exceeds the supported maximum')
+        CALL Fatal(Caller, 'Lagrange triangles degree exceeds the supported maximum')
       END IF
       n = TriangleNodeCounts(Degree)
       NodesU => VTKTriangleU(Degree,1:n)
